@@ -18,7 +18,7 @@ const NavigationMap: React.FC<NavigationMapProps> = ({ userLocation, targetPOI, 
   const userMarkerRef = useRef<any>(null);
   const targetMarkerRef = useRef<any>(null);
   const pathRef = useRef<any>(null);
-  const hasAutoFittedRef = useRef<boolean>(false);
+  const lastTargetIdRef = useRef<string | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
 
   // Fetch route from Mapbox
@@ -100,31 +100,30 @@ const NavigationMap: React.FC<NavigationMapProps> = ({ userLocation, targetPOI, 
         targetMarkerRef.current.setLatLng(targetCoords);
       }
 
-      // Fetch and draw actual road route
-      fetchRoute(userLocation, targetPOI.location).then(routeCoords => {
-        if (routeCoords && routeCoords.length > 0) {
-          const isNewRoute = !pathRef.current;
-          
-          // Always use solid line for Mapbox routes
-          if (isNewRoute) {
-            pathRef.current = L.polyline(routeCoords, { 
-              color: '#4f46e5', 
-              weight: 5,
-              opacity: 0.8,
-              lineJoin: 'round',
-              lineCap: 'round'
-            }).addTo(mapRef.current);
-            
-            // Auto-fit bounds ONLY when route is first created
-            const bounds = L.latLngBounds(routeCoords);
-            mapRef.current.fitBounds(bounds, { padding: [80, 80] });
-            hasAutoFittedRef.current = true;
-          } else {
-            // Just update route coordinates, don't change zoom
-            pathRef.current.setLatLngs(routeCoords);
-          }
+      // Fetch and draw route ONLY when target changes, not on every location update
+      const targetId = targetPOI.id;
+      if (lastTargetIdRef.current !== targetId) {
+        lastTargetIdRef.current = targetId;
+
+        // Clear old route
+        if (pathRef.current) {
+          mapRef.current.removeLayer(pathRef.current);
+          pathRef.current = null;
         }
-      });
+
+        fetchRoute(userLocation, targetPOI.location).then(routeCoords => {
+          if (!routeCoords || routeCoords.length === 0) return;
+          pathRef.current = L.polyline(routeCoords, {
+            color: '#4f46e5',
+            weight: 5,
+            opacity: 0.8,
+            lineJoin: 'round',
+            lineCap: 'round'
+          }).addTo(mapRef.current);
+          const bounds = L.latLngBounds(routeCoords);
+          mapRef.current.fitBounds(bounds, { padding: [80, 80] });
+        });
+      }
 
     } else {
       // Clear target elements if no target
@@ -137,6 +136,7 @@ const NavigationMap: React.FC<NavigationMapProps> = ({ userLocation, targetPOI, 
         pathRef.current = null;
       }
       hasAutoFittedRef.current = false;
+      lastTargetIdRef.current = null;
       mapRef.current.panTo([userLocation.latitude, userLocation.longitude]);
     }
   }, [userLocation, targetPOI]);
