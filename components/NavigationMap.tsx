@@ -19,6 +19,7 @@ const NavigationMap: React.FC<NavigationMapProps> = ({ userLocation, targetPOI, 
   const targetMarkerRef = useRef<any>(null);
   const pathRef = useRef<any>(null);
   const lastTargetIdRef = useRef<string | null>(null);
+  const lastUserLocationRef = useRef<GeoLocation | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
 
   // Fetch route from Mapbox
@@ -33,17 +34,14 @@ const NavigationMap: React.FC<NavigationMapProps> = ({ userLocation, targetPOI, 
 
       if (data.routes && data.routes.length > 0) {
         const coordinates = data.routes[0].geometry.coordinates;
-        // Convert [lon, lat] to [lat, lon] for Leaflet
         return coordinates.map((coord: number[]) => [coord[1], coord[0]]);
       }
-      // Fallback to straight line only if API fails
       return [
         [start.latitude, start.longitude],
         [end.latitude, end.longitude]
       ];
     } catch (error) {
       console.error('Route fetch error:', error);
-      // Fallback to straight line
       return [
         [start.latitude, start.longitude],
         [end.latitude, end.longitude]
@@ -53,10 +51,10 @@ const NavigationMap: React.FC<NavigationMapProps> = ({ userLocation, targetPOI, 
     }
   };
 
-  // Initialize Map
+  // Initialize Map once
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
-    
+
     try {
       mapRef.current = L.map(mapContainerRef.current, {
         zoomControl: false,
@@ -68,7 +66,6 @@ const NavigationMap: React.FC<NavigationMapProps> = ({ userLocation, targetPOI, 
         maxZoom: 19
       }).addTo(mapRef.current);
 
-      // Custom User Icon (Blue Pulse)
       const userIcon = L.divIcon({
         className: 'custom-div-icon',
         html: `<div class="user-marker w-4 h-4"><div class="user-marker-pulse"></div></div>`,
@@ -83,29 +80,49 @@ const NavigationMap: React.FC<NavigationMapProps> = ({ userLocation, targetPOI, 
     }
   }, []);
 
-  // Update Map Elements when location or target changes
+  // Update user marker position and refresh route every 5m of movement
+  useEffect(() => {
+    if (!mapRef.current || !userMarkerRef.current) return;
+    userMarkerRef.current.setLatLng([userLocation.latitude, userLocation.longitude]);
+
+    if (!targetPOI || !pathRef.current) return;
+
+    // Check if user moved more than 5 meters since last route update
+    const prev = lastUserLocationRef.current;
+    if (prev) {
+      const R = 6371e3;
+      const dLat = (userLocation.latitude - prev.latitude) * Math.PI / 180;
+      const dLon = (userLocation.longitude - prev.longitude) * Math.PI / 180;
+      const a = Math.sin(dLat/2)**2 + Math.cos(prev.latitude * Math.PI/180) * Math.cos(userLocation.latitude * Math.PI/180) * Math.sin(dLon/2)**2;
+      const moved = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      if (moved < 5) return;
+    }
+
+    lastUserLocationRef.current = userLocation;
+    fetchRoute(userLocation, targetPOI.location).then(routeCoords => {
+      if (!routeCoords || !pathRef.current) return;
+      pathRef.current.setLatLngs(routeCoords);
+    });
+  }, [userLocation, targetPOI]);
+
+  // Handle target POI changes - fetch route only when target changes
   useEffect(() => {
     if (!mapRef.current) return;
 
-    // Update User Marker
-    userMarkerRef.current.setLatLng([userLocation.latitude, userLocation.longitude]);
-
-    // Update Target Marker and Route
     if (targetPOI) {
       const targetCoords = [targetPOI.location.latitude, targetPOI.location.longitude];
-      
+
+      // Create or update target marker
       if (!targetMarkerRef.current) {
         targetMarkerRef.current = L.marker(targetCoords).addTo(mapRef.current);
       } else {
         targetMarkerRef.current.setLatLng(targetCoords);
       }
 
-      // Fetch and draw route ONLY when target changes, not on every location update
-      const targetId = targetPOI.id;
-      if (lastTargetIdRef.current !== targetId) {
-        lastTargetIdRef.current = targetId;
+      // Only fetch route when target changes
+      if (lastTargetIdRef.current !== targetPOI.id) {
+        lastTargetIdRef.current = targetPOI.id;
 
-        // Clear old route
         if (pathRef.current) {
           mapRef.current.removeLayer(pathRef.current);
           pathRef.current = null;
@@ -120,13 +137,13 @@ const NavigationMap: React.FC<NavigationMapProps> = ({ userLocation, targetPOI, 
             lineJoin: 'round',
             lineCap: 'round'
           }).addTo(mapRef.current);
+
           const bounds = L.latLngBounds(routeCoords);
           mapRef.current.fitBounds(bounds, { padding: [80, 80] });
         });
       }
-
     } else {
-      // Clear target elements if no target
+      // Clear everything when no target
       if (targetMarkerRef.current) {
         mapRef.current.removeLayer(targetMarkerRef.current);
         targetMarkerRef.current = null;
@@ -138,17 +155,15 @@ const NavigationMap: React.FC<NavigationMapProps> = ({ userLocation, targetPOI, 
       lastTargetIdRef.current = null;
       mapRef.current.panTo([userLocation.latitude, userLocation.longitude]);
     }
-  }, [userLocation, targetPOI]);
+  }, [targetPOI]);
 
   const distance = targetPOI ? calculateDistance(userLocation, targetPOI.location) : 0;
-  const arrived = distance < 30;
+  const arrived = distance < 15;
 
   return (
     <div className="relative w-full h-full overflow-hidden">
-      {/* The actual Map Leaflet container */}
       <div ref={mapContainerRef} className="w-full h-full z-0" />
 
-      {/* Distance Overlay - Stays fixed on screen */}
       {!hideOverlay && (
         <div className="absolute top-4 left-4 z-[500] bg-white/80 backdrop-blur-md rounded-2xl p-4 border border-white/40 shadow-lg text-slate-800">
           <div className="text-[10px] uppercase tracking-widest opacity-60 font-bold mb-1">Live Coordinates</div>
@@ -159,7 +174,6 @@ const NavigationMap: React.FC<NavigationMapProps> = ({ userLocation, targetPOI, 
         </div>
       )}
 
-      {/* Target Info Card - Hidden when detail panel is open to avoid overlap */}
       {targetPOI && !hideOverlay && (
         <div className="absolute bottom-20 left-4 right-4 z-[500] bg-white rounded-3xl p-5 shadow-2xl flex items-center justify-between animate-in fade-in slide-in-from-bottom-4 duration-300">
           <div className="flex items-center gap-4">
