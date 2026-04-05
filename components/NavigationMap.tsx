@@ -135,7 +135,6 @@ const NavigationMap: React.FC<NavigationMapProps> = ({ userLocation, targetPOI, 
         mapRef.current.removeLayer(pathRef.current);
         pathRef.current = null;
       }
-      hasAutoFittedRef.current = false;
       lastTargetIdRef.current = null;
       mapRef.current.panTo([userLocation.latitude, userLocation.longitude]);
     }
