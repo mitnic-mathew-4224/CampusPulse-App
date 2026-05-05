@@ -506,6 +506,36 @@ Steps:
 Accuracy: ±0.5% for distances up to 1000km
 ```
 
+**How it is actually calculated — Real example:**
+
+User is at CEG campus center (13.010838, 80.235385).
+Target is IST Department (13.012957, 80.235861).
+
+```
+Step 1: Convert to radians
+  φ1 = 13.010838 × (π/180) = 0.22713 rad
+  φ2 = 13.012957 × (π/180) = 0.22717 rad
+
+Step 2: Differences
+  Δφ = 0.22717 - 0.22713 = 0.000037 rad
+  Δλ = 1.40039 - 1.40038 = 0.0000083 rad
+
+Step 3: Haversine
+  a = sin²(0.0000185) + cos(0.22713)·cos(0.22717)·sin²(0.00000415)
+  a ≈ 3.58 × 10⁻¹⁰
+
+Step 4: Angular distance
+  c = 2 × atan2(√(3.58×10⁻¹⁰), √(1-3.58×10⁻¹⁰))
+  c ≈ 0.0000379 radians
+
+Step 5: Multiply by Earth radius
+  distance = 6,371,000 × 0.0000379 ≈ 241 meters
+```
+
+**Interpretation:** Output is 241 meters. Since 241 > 10 (threshold), `isArrived = false`. The map shows "241 meters away". As the user walks and distance drops to ≤ 10m, arrival is triggered.
+
+---
+
 ### **2. Arrival Detection**
 ```
 Threshold: 10 meters
@@ -523,6 +553,26 @@ IF distance > 10m AND arrived:
 Hysteresis: Prevents flickering near boundary
 ```
 
+**How it is actually calculated — Simulation walkthrough:**
+
+User presses North button repeatedly (each press = +0.0001° latitude ≈ 11 meters):
+
+```
+Press  1: lat = 13.010938 → distance = 230m → isArrived = false
+Press  5: lat = 13.011338 → distance = 185m → isArrived = false
+Press 10: lat = 13.011838 → distance = 124m → isArrived = false
+Press 15: lat = 13.012338 → distance =  68m → isArrived = false
+Press 19: lat = 13.012738 → distance =  24m → isArrived = false
+Press 20: lat = 13.012838 → distance =  13m → isArrived = false
+Press 21: lat = 13.012938 → distance =   3m → isArrived = TRUE ✔
+```
+
+**Interpretation:** At press 21, Haversine returns 3m which is ≤ 10m threshold. React's useEffect detects this, sets `isArrived = true`, slides up the POI info panel, and auto-plays the audio narration.
+
+**Why 10 meters?** GPS hardware accuracy is ±5–10m. A threshold below 10m would never trigger on real GPS because the GPS itself has that much error. 10m is the sweet spot — tight enough to confirm arrival, loose enough to work with real GPS noise.
+
+---
+
 ### **3. Search Filtering**
 ```
 Input: searchQuery string
@@ -538,6 +588,26 @@ Algorithm:
 
 Time Complexity: O(n) where n = 22 POIs
 ```
+
+**How it is actually calculated — Example with "ist":**
+
+```
+Query typed: "ist" → lowercased: "ist"
+
+For each of 22 POIs, 3 checks run:
+
+POI: "Department of Information Science and Technology"
+  name check:        "department of information science and technology".includes("ist") → TRUE ("ist" is in "Information")
+  → INCLUDED in results
+
+POI: "Vivekananda Auditorium"
+  name check:        "vivekananda auditorium".includes("ist") → FALSE
+  description check: "main auditorium...".includes("ist") → FALSE
+  category check:    "facility".includes("ist") → FALSE
+  → EXCLUDED from results
+```
+
+**Interpretation:** Only IST Department passes the filter and appears in the list. The UI re-renders instantly showing just that one result because React state update (`setSearchQuery`) triggers a re-render which recomputes `filteredPOIs`.
 
 ---
 

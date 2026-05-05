@@ -218,6 +218,38 @@ The architecture follows separation of concerns with distinct service modules, e
 **Time Complexity:** O(1)
 **Use Case:** Real-time proximity detection for arrival notifications
 
+**Worked Example — User approaching IST Department:**
+
+Given:
+- User location: latitude = 13.010838, longitude = 80.235385 (CEG campus center)
+- IST Department: latitude = 13.012957, longitude = 80.235861
+
+Step 1 — Convert to radians:
+- φ1 = 13.010838 × (π/180) = 0.22713 radians
+- φ2 = 13.012957 × (π/180) = 0.22717 radians
+- λ1 = 80.235385 × (π/180) = 1.40038 radians
+- λ2 = 80.235861 × (π/180) = 1.40039 radians
+
+Step 2 — Calculate differences:
+- Δφ = 0.22717 - 0.22713 = 0.000037 radians
+- Δλ = 1.40039 - 1.40038 = 0.0000083 radians
+
+Step 3 — Apply Haversine formula:
+- a = sin²(0.000037/2) + cos(0.22713) × cos(0.22717) × sin²(0.0000083/2)
+- a = sin²(0.0000185)² + (0.9743 × 0.9743) × sin²(0.00000415)²
+- a = (3.42 × 10⁻¹⁰) + (0.9493 × 1.72 × 10⁻¹¹)
+- a ≈ 3.58 × 10⁻¹⁰
+
+Step 4 — Angular distance:
+- c = 2 × atan2(√(3.58×10⁻¹⁰), √(1 - 3.58×10⁻¹⁰))
+- c ≈ 2 × atan2(0.0000189, 0.9999999)
+- c ≈ 0.0000379 radians
+
+Step 5 — Multiply by Earth radius:
+- distance = 6,371,000 × 0.0000379 ≈ **241 meters**
+
+**Interpretation:** The user is 241 meters away from IST Department. Since 241 > 10 (PROXIMITY_THRESHOLD), `isArrived` remains `false`. As the user walks closer and the distance drops to ≤ 10 meters, `isArrived` is set to `true` and arrival actions are triggered.
+
 ### 3.4.2 Arrival Detection Logic
 
 **Purpose:** Determine when user reaches destination
@@ -236,6 +268,24 @@ The architecture follows separation of concerns with distinct service modules, e
 
 **Hysteresis:** Prevents flickering by maintaining state until threshold crossed in opposite direction
 
+**Worked Example — Step-by-step arrival sequence:**
+
+Scenario: User is walking toward IST Department using simulation mode (pressing North button repeatedly).
+
+| Button Press | User Latitude | Distance to IST | isArrived | Action |
+|---|---|---|---|---|
+| Start | 13.010838 | 241m | false | Nothing |
+| Press N ×5 | 13.011338 | 185m | false | Nothing |
+| Press N ×10 | 13.011838 | 124m | false | Nothing |
+| Press N ×15 | 13.012338 | 68m | false | Nothing |
+| Press N ×19 | 13.012738 | 24m | false | Nothing |
+| Press N ×20 | 13.012838 | 13m | false | Nothing |
+| Press N ×21 | 13.012938 | **3m** | **true** | Show POI panel + Play narration |
+
+Each North press adds 0.0001° latitude ≈ 11 meters. At press 21, distance drops below 10m threshold → arrival triggered.
+
+**Why 10 meters?** GPS hardware accuracy is typically ±5–10 meters. Setting the threshold at 10m ensures the user is genuinely at the location before triggering arrival, without requiring impossible sub-meter precision.
+
 ### 3.4.3 Route Rendering Algorithm
 
 **Purpose:** Display navigation path on map
@@ -252,6 +302,34 @@ The architecture follows separation of concerns with distinct service modules, e
 
 **Fallback:** If API fails, render straight line between start and end points
 
+**Worked Example — Route from campus center to IST:**
+
+Mapbox API call:
+```
+GET https://api.mapbox.com/directions/v5/mapbox/walking/
+  80.235385,13.010838;80.235861,13.012957
+  ?geometries=geojson&access_token=...
+```
+
+Mapbox returns GeoJSON coordinates (longitude first — this is the GeoJSON standard):
+```json
+[[80.235385, 13.010838], [80.235410, 13.011200], [80.235600, 13.011800], [80.235861, 13.012957]]
+```
+
+Coordinate conversion (Leaflet needs latitude first):
+```
+[80.235385, 13.010838] → [13.010838, 80.235385]
+[80.235410, 13.011200] → [13.011200, 80.235410]
+... and so on
+```
+
+Bounding box calculation for auto-fit:
+- Min lat = 13.010838, Max lat = 13.012957
+- Min lng = 80.235385, Max lng = 80.235861
+- Map zooms to fit this rectangle with 80px padding on all sides
+
+**Interpretation:** The user sees the full walking path drawn on the map from their current position to IST, following actual campus roads — not a straight line through buildings.
+
 ### 3.4.4 Search Filtering Algorithm
 
 **Purpose:** Real-time POI search
@@ -267,6 +345,26 @@ The architecture follows separation of concerns with distinct service modules, e
 
 **Time Complexity:** O(n) where n = number of POIs
 **Optimization:** Case-insensitive matching for better UX
+
+**Worked Example — User types "ist":**
+
+Query = "ist" → converted to lowercase = "ist"
+
+Checking each of the 22 POIs:
+| POI Name | name match | description match | category match | Included? |
+|---|---|---|---|---|
+| Department of Information Science and Technology | ✅ "ist" in name | ✅ "IST" in description | ❌ | ✅ Yes |
+| Vivekananda Auditorium | ❌ | ❌ | ❌ | ❌ No |
+| Knowledge Park | ❌ | ❌ | ❌ | ❌ No |
+| ... (19 more) | ❌ | ❌ | ❌ | ❌ No |
+
+Result: Only IST Department is returned and displayed.
+
+**Worked Example — User types "acad":**
+- Matches all POIs where category = "Academic" (because "acad" is in "academic")
+- Returns: IST Department, Department of Mathematics, Applied Chemistry, MBA, etc.
+
+**Default state (empty search):** `displayPOIs = filteredPOIs.slice(0, 3)` — shows only the first 3 POIs as suggestions to avoid overwhelming the user on load.
 
 ---
 
